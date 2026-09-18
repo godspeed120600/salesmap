@@ -366,7 +366,7 @@
     (async function main() {
       try { await loadKakao(); }
       catch (e) {
-        loadingText('카카오 지도를 불러오지 못했습니다.<br><br>카카오 개발자 콘솔에서<br>① <code>앱 설정 › 카카오맵 › 활성화 ON</code><br>② <code>플랫폼 › Web › 사이트 도메인</code>에 <code>' + location.origin + '</code> 등록<br>후 새로고침하세요.');
+        loadingText('카카오 지도를 불러오지 못했습니다.<br><br>카카오 개발자 콘솔에서<br>① <code>앱 설정 › 카카오맵 › 활성화 ON</code><br>② <code>앱 설정 › 앱 › 플랫폼 키 › JavaScript 키 › JavaScript SDK 도메인</code>에 <code>' + location.origin + '</code> 등록<br>후 새로고침하세요.');
         $('loading').querySelector('.spinner').style.display = 'none';
         return;
       }

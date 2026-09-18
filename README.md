@@ -20,7 +20,7 @@
 
 ## 카카오 개발자 콘솔 설정 (필수)
 1. 앱 설정 › **카카오맵 › 활성화 ON**
-2. 플랫폼 › Web › 사이트 도메인에 `https://godspeed120600.github.io` 등록 (로컬 테스트용 `http://localhost:3000` 도 함께)
+2. 앱 설정 › 앱 › **플랫폼 키** › JavaScript 키 선택 › **JavaScript SDK 도메인**에 `https://godspeed120600.github.io` 등록 (로컬 테스트용 `http://localhost:3000` 도 함께)
 
 ## 로컬 테스트
 `serve.ps1` 실행 후 http://localhost:3000 (같은 와이파이의 핸드폰에서는 PC IP:3000)
