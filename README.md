@@ -3,7 +3,7 @@
 주소 목록을 카카오 지도 위에 띄우는 모바일 웹페이지. 핸드폰 브라우저로 열고 "홈 화면에 추가"하면 앱처럼 씁니다.
 
 - 페이지: https://godspeed120600.github.io/salesmap/
-- 데이터: 구글시트 (`index.html` 의 `CONFIG.SHEET_CSV_URL`)
+- 데이터: 구글시트 "세일즈맵 데이터" (`index.html` 의 `CONFIG.SHEET_CSV_URL`, 링크 공유 "링크가 있는 모든 사용자 › 뷰어" 필수)
 - 마커 탭 → 카카오맵 앱으로 열기 / 길찾기 / 주소 복사
 - `SRC_TYPE`(업태) 값별로 색상·필터 칩 자동 생성
 
