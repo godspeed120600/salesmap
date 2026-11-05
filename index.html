@@ -41,6 +41,24 @@
     .chip .dot { width: 8px; height: 8px; border-radius: 50%; background: #94a3b8; }
     .chip.on { background: #1e293b; color: #fff; border-color: #1e293b; }
 
+    /* 인허가일자 기간 필터 */
+    #daterow { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+    .datebox {
+      flex: 1; min-width: 0; display: flex; align-items: center; gap: 4px;
+      background: #fff; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.12); padding: 0 8px; height: 38px;
+    }
+    .datebox .sep { color: #94a3b8; font-size: 13px; }
+    .datebox input {
+      flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: #0f172a;
+      font-family: inherit; font-size: 13px; height: 100%; text-align: center;
+    }
+    .datebox input:focus { color: #2563eb; }
+    .dbtn {
+      flex-shrink: 0; border: 1px solid #e2e8f0; background: #fff; color: #334155; border-radius: 999px;
+      padding: 0 11px; height: 32px; font-size: 13px; box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+    .dbtn:active { background: #f1f5f9; }
+
     /* 우하단 플로팅 버튼 */
     #fabs { position: fixed; right: 12px; bottom: calc(16px + env(safe-area-inset-bottom)); z-index: 20; display: flex; flex-direction: column; gap: 10px; }
     .fab {
@@ -118,6 +136,15 @@
       <button id="clear" aria-label="지우기">×</button>
       <span id="count"><b>0</b>건</span>
     </div>
+    <div id="daterow">
+      <div class="datebox">
+        <input id="d-from" type="date" aria-label="인허가일자 시작일">
+        <span class="sep">~</span>
+        <input id="d-to" type="date" aria-label="인허가일자 종료일">
+      </div>
+      <button class="dbtn" id="d-month">이번달</button>
+      <button class="dbtn" id="d-all">전체</button>
+    </div>
     <div id="chips"></div>
   </div>
 
@@ -174,6 +201,7 @@
     let allRows = [];          // {name, addr, lat, lng, date, cat, sub, memo, marker}
     let activeCat = '';
     let query = '';
+    let dateFrom = '', dateTo = '';   // 인허가일자 필터 (YYYY-MM-DD, 빈 값 = 제한 없음)
     const catColor = new Map();
     const markerImages = new Map();
 
@@ -207,6 +235,19 @@
         markerImages.set(color, new kakao.maps.MarkerImage(src, new kakao.maps.Size(30, 40), { offset: new kakao.maps.Point(15, 40) }));
       }
       return markerImages.get(color);
+    }
+
+    // --- 날짜 유틸 (브라우저 로컬 시간 기준) ---
+    const pad2 = (n) => String(n).padStart(2, '0');
+    const ymd = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+    // '2026-09-17' / '20260917' / '2026.9.17' → '2026-09-17' (해석 불가면 '')
+    function normDate(s) {
+      const m = String(s || '').match(/(\d{4})\D?(\d{1,2})\D?(\d{1,2})/);
+      return m ? `${m[1]}-${pad2(m[2])}-${pad2(m[3])}` : '';
+    }
+    function monthRange() {          // 이번 달 1일 ~ 오늘
+      const t = new Date();
+      return { from: `${t.getFullYear()}-${pad2(t.getMonth() + 1)}-01`, to: ymd(t) };
     }
 
     // --- 데이터 로드: 구글시트 CSV → 실패 시 points.js ---
@@ -284,6 +325,8 @@
     function visible(r) {
       if (isNaN(r.lat) || isNaN(r.lng)) return false;
       if (activeCat && r.cat !== activeCat) return false;
+      const d = normDate(r.date);    // 날짜를 해석할 수 없는 행은 기간 필터에서 제외하지 않음
+      if (d) { if (dateFrom && d < dateFrom) return false; if (dateTo && d > dateTo) return false; }
       if (query) { const q = query.toLowerCase(); if (!(r.name.toLowerCase().includes(q) || r.addr.toLowerCase().includes(q) || (r.sub || '').toLowerCase().includes(q))) return false; }
       return true;
     }
@@ -362,6 +405,37 @@
       }, () => toast('위치를 가져오지 못했습니다 (위치 권한 확인)'), { enableHighAccuracy: true, timeout: 8000 });
     };
 
+    // --- 인허가일자 필터 ---
+    function fitToShown() {
+      const pts = allRows.filter(visible);
+      if (!pts.length) return;
+      if (pts.length === 1) { map.setLevel(4); map.panTo(new kakao.maps.LatLng(pts[0].lat, pts[0].lng)); return; }
+      const b = new kakao.maps.LatLngBounds();
+      pts.forEach(r => b.extend(new kakao.maps.LatLng(r.lat, r.lng)));
+      map.setBounds(b, 150, 40, 40, 40);   // 위쪽 여백 = 검색바·기간·칩 영역
+    }
+    function setDates(from, to) {
+      dateFrom = from; dateTo = to;
+      $('d-from').value = from; $('d-to').value = to;
+    }
+    function applyDates(changed) {
+      let f = $('d-from').value, t = $('d-to').value;
+      if (f && t && f > t) {           // 시작일 > 종료일이면 방금 바꾼 쪽에 맞춰 다른 쪽을 같이 이동
+        if (changed === 'from') t = f; else f = t;
+      }
+      setDates(f, t);
+      if (!map || !clusterer) return;   // 지도 로딩 전이면 값만 저장 (로딩 끝나면 이 값으로 표시)
+      closeCard();
+      render();
+      if (allRows.some(visible)) fitToShown();
+      else toast('이 기간에 인허가된 가게가 없어요. 기간을 넓히거나 [전체]를 눌러보세요');
+    }
+    $('d-from').addEventListener('change', () => applyDates('from'));
+    $('d-to').addEventListener('change', () => applyDates('to'));
+    $('d-month').onclick = () => { const r = monthRange(); setDates(r.from, r.to); applyDates(); };
+    $('d-all').onclick = () => { setDates('', ''); applyDates(); };
+    { const r = monthRange(); setDates(r.from, r.to); }   // 기본값: 이번 달 1일 ~ 오늘
+
     // --- 시작 ---
     (async function main() {
       try { await loadKakao(); }
@@ -383,13 +457,9 @@
       render();
       hideLoading();
 
-      // 데이터 범위에 맞춰 화면 맞춤
-      const pts = allRows.filter(visible);
-      if (pts.length) {
-        const b = new kakao.maps.LatLngBounds();
-        pts.forEach(r => b.extend(new kakao.maps.LatLng(r.lat, r.lng)));
-        map.setBounds(b, 110, 40, 40, 40);
-      }
+      // 현재 필터(기본: 이번 달)에 맞춰 화면 맞춤
+      if (allRows.some(visible)) fitToShown();
+      else if (allRows.length) toast('이번 달에 인허가된 가게가 아직 없어요. [전체]를 눌러 이전 데이터를 확인하세요', 5000);
     })();
   </script>
 </body>
