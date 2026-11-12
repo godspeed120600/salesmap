@@ -40,6 +40,7 @@
     }
     .chip .dot { width: 8px; height: 8px; border-radius: 50%; background: #94a3b8; }
     .chip.on { background: #1e293b; color: #fff; border-color: #1e293b; }
+    .chipsep { flex-shrink: 0; width: 1px; margin: 4px 2px; background: #cbd5e1; }
 
     /* 인허가일자 기간 필터 */
     #daterow { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
@@ -188,18 +189,22 @@
       KAKAO_JS_KEY: 'b2b63085e9b56d8909a9d7237b96e58f',
       // 구글시트 CSV (컬럼: 이름, 주소, 위도, 경도, 인허가일자, 업태, 업종, 메모 — 위도/경도가 비어 있으면 주소로 자동 지오코딩)
       // 비워두면 points.js 의 window.POINTS 를 사용합니다.
-      SHEET_CSV_URL: 'https://docs.google.com/spreadsheets/d/19q7hxD_G3zfUBNIe66mjG4C4FKD49JWlQpl27T1v0oc/export?format=csv',
+      SHEET_CSV_URL: 'https://docs.google.com/spreadsheets/d/e/2PACX-1vQg5EjqqR-eM28FTP7gRAaU-YgHscR6Z-VZhrnHrKdBA4XQg3SdywtTZmYl6Afm5xpLwNzE70LOxLKI/pub?gid=726619584&single=true&output=csv',
       CENTER: { lat: 37.665, lng: 126.770 },   // 초기 중심 (일산)
       LEVEL: 6,                                 // 초기 확대 레벨 (숫자 작을수록 확대)
       CATEGORY_COL: '업태',                     // 색상/필터 기준 컬럼
     };
     const PALETTE = ['#2563eb', '#dc2626', '#16a34a', '#d97706', '#7c3aed', '#0891b2', '#db2777', '#4b5563'];
+    // 컨택현황(진행상태) 색상 — 시트에 '진행상태' 컬럼이 있으면 마커·카드·필터가 이 색을 씁니다
+    const STATUS_COLORS = { '미접촉': '#64748b', '방문완료': '#2563eb', '상담중': '#d97706', '계약': '#16a34a', '보류': '#7c3aed', '거절': '#dc2626' };
     // =============================================
 
     const $ = (id) => document.getElementById(id);
     let map, clusterer, geocoder, myMarker;
     let allRows = [];          // {name, addr, lat, lng, date, cat, sub, memo, marker}
     let activeCat = '';
+    let activeStatus = '';     // 진행상태 필터 (빈 값 = 전체)
+    let hasStatus = false;     // 시트에 진행상태 컬럼이 있는지
     let query = '';
     let dateFrom = '', dateTo = '';   // 인허가일자 필터 (YYYY-MM-DD, 빈 값 = 제한 없음)
     const catColor = new Map();
@@ -227,8 +232,10 @@
       if (!catColor.has(cat)) catColor.set(cat, PALETTE[catColor.size % PALETTE.length]);
       return catColor.get(cat);
     }
-    function markerImage(cat) {
-      const color = colorFor(cat);
+    const statusColor = (s) => STATUS_COLORS[s] || '#64748b';
+    // 마커·목록 점 색: 진행상태가 있으면 진행상태, 없으면(예전 시트·points.js) 업태 기준
+    const pinColor = (r) => hasStatus ? statusColor(r.status) : colorFor(r.cat);
+    function markerImage(color) {
       if (!markerImages.has(color)) {
         const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="30" height="40" viewBox="0 0 30 40"><path d="M15 0C6.7 0 0 6.7 0 15c0 10.5 15 25 15 25s15-14.5 15-25C30 6.7 23.3 0 15 0z" fill="${color}"/><circle cx="15" cy="15" r="6" fill="#fff"/></svg>`;
         const src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
@@ -242,7 +249,7 @@
     const ymd = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
     // '2026-09-17' / '20260917' / '2026.9.17' → '2026-09-17' (해석 불가면 '')
     function normDate(s) {
-      const m = String(s || '').match(/(\d{4})\D?(\d{1,2})\D?(\d{1,2})/);
+      const m = String(s || '').match(/(\d{4})\D{0,3}(\d{1,2})\D{0,3}(\d{1,2})/);
       return m ? `${m[1]}-${pad2(m[2])}-${pad2(m[3])}` : '';
     }
     function monthRange() {          // 이번 달 1일 ~ 오늘
@@ -259,6 +266,7 @@
         lat: parseFloat(g('위도', 'lat')), lng: parseFloat(g('경도', 'lng', 'lon')),
         date: g('인허가일자', '날짜', 'date', 'LCPMT_YMD'),
         cat: g(CONFIG.CATEGORY_COL, '업태', 'category', 'SRC_TYPE'),
+        status: g('진행상태', 'status'),
         sub: g('업종', 'BZSTAT_SE_NM'),
         memo: g('메모', 'memo', '비고'),
       };
@@ -309,22 +317,34 @@
 
     // --- 마커/필터 ---
     function buildChips() {
-      const cats = [...new Set(allRows.map(r => r.cat).filter(Boolean))];
       const box = $('chips'); box.innerHTML = '';
-      if (cats.length < 2) return;
-      const mk = (label, val) => {
-        const b = document.createElement('button'); b.className = 'chip' + (val === activeCat ? ' on' : '');
-        if (val) { const d = document.createElement('span'); d.className = 'dot'; d.style.background = colorFor(val); b.appendChild(d); }
+      const chip = (label, on, color, onclick) => {
+        const b = document.createElement('button'); b.className = 'chip' + (on ? ' on' : '');
+        if (color) { const d = document.createElement('span'); d.className = 'dot'; d.style.background = color; b.appendChild(d); }
         b.appendChild(document.createTextNode(label));
-        b.onclick = () => { activeCat = val; buildChips(); render(); };
+        b.onclick = onclick;
         box.appendChild(b);
       };
-      mk('전체', '');
-      cats.forEach(c => mk(c, c));
+      // 컨택현황(진행상태) 칩 — 같은 칩을 다시 누르면 해제
+      if (hasStatus) {
+        const present = new Set(allRows.map(r => r.status));
+        const order = [...Object.keys(STATUS_COLORS), ...[...present].filter(s => s && !(s in STATUS_COLORS))];
+        order.filter(s => present.has(s)).forEach(s =>
+          chip(s, s === activeStatus, statusColor(s), () => { activeStatus = (activeStatus === s ? '' : s); buildChips(); render(); }));
+      }
+      // 업태 칩 (진행상태가 있으면 점 색은 쓰지 않음 — 색은 진행상태 전용)
+      const cats = [...new Set(allRows.map(r => r.cat).filter(Boolean))];
+      if (cats.length >= 2) {
+        if (hasStatus) { const sep = document.createElement('span'); sep.className = 'chipsep'; box.appendChild(sep); }
+        const catChip = (label, val) => chip(label, val === activeCat, val && !hasStatus ? colorFor(val) : '', () => { activeCat = val; buildChips(); render(); });
+        catChip('전체', '');
+        cats.forEach(c => catChip(c, c));
+      }
     }
     function visible(r) {
       if (isNaN(r.lat) || isNaN(r.lng)) return false;
       if (activeCat && r.cat !== activeCat) return false;
+      if (activeStatus && r.status !== activeStatus) return false;
       const d = normDate(r.date);    // 날짜를 해석할 수 없는 행은 기간 필터에서 제외하지 않음
       if (d) { if (dateFrom && d < dateFrom) return false; if (dateTo && d > dateTo) return false; }
       if (query) { const q = query.toLowerCase(); if (!(r.name.toLowerCase().includes(q) || r.addr.toLowerCase().includes(q) || (r.sub || '').toLowerCase().includes(q))) return false; }
@@ -340,7 +360,7 @@
     function makeMarkers() {
       allRows.forEach(r => {
         if (isNaN(r.lat) || isNaN(r.lng)) return;
-        r.marker = new kakao.maps.Marker({ position: new kakao.maps.LatLng(r.lat, r.lng), image: markerImage(r.cat), title: r.name });
+        r.marker = new kakao.maps.Marker({ position: new kakao.maps.LatLng(r.lat, r.lng), image: markerImage(pinColor(r)), title: r.name });
         kakao.maps.event.addListener(r.marker, 'click', () => openCard(r));
       });
     }
@@ -351,7 +371,8 @@
       current = r;
       $('c-title').textContent = r.name || '(이름 없음)';
       const meta = $('c-meta'); meta.innerHTML = '';
-      if (r.cat) { const t = document.createElement('span'); t.className = 'tag cat'; t.style.background = colorFor(r.cat); t.textContent = r.cat; meta.appendChild(t); }
+      if (hasStatus && r.status) { const t = document.createElement('span'); t.className = 'tag cat'; t.style.background = statusColor(r.status); t.textContent = r.status; meta.appendChild(t); }
+      if (r.cat) { const t = document.createElement('span'); t.className = hasStatus ? 'tag' : 'tag cat'; if (!hasStatus) t.style.background = colorFor(r.cat); t.textContent = r.cat; meta.appendChild(t); }
       if (r.sub) { const t = document.createElement('span'); t.className = 'tag'; t.textContent = r.sub; meta.appendChild(t); }
       if (r.date) { const t = document.createElement('span'); t.className = 'tag'; t.textContent = '인허가 ' + r.date; meta.appendChild(t); }
       $('c-addr').textContent = r.addr;
@@ -378,7 +399,7 @@
       const ul = $('list-ul'); ul.innerHTML = '';
       shown.forEach(r => {
         const li = document.createElement('li');
-        li.innerHTML = `<span class="dot" style="background:${colorFor(r.cat)}"></span><div><div class="n"></div><div class="a"></div></div><span class="d"></span>`;
+        li.innerHTML = `<span class="dot" style="background:${pinColor(r)}"></span><div><div class="n"></div><div class="a"></div></div><span class="d"></span>`;
         li.querySelector('.n').textContent = r.name; li.querySelector('.a').textContent = r.addr; li.querySelector('.d').textContent = r.date;
         li.onclick = () => openCard(r, true);
         ul.appendChild(li);
@@ -451,6 +472,8 @@
 
       loadingText('데이터를 불러오는 중...');
       allRows = await fetchRows();
+      hasStatus = allRows.some(r => r.status);   // 진행상태 컬럼이 있는 시트(영업관리 '지도용' 탭)면 컨택현황 모드
+      if (hasStatus) allRows.forEach(r => { if (!r.status) r.status = '미접촉'; });
       await fillMissingCoords(allRows);
       makeMarkers();
       buildChips();
