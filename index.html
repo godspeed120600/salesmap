@@ -196,7 +196,10 @@
     };
     const PALETTE = ['#2563eb', '#dc2626', '#16a34a', '#d97706', '#7c3aed', '#0891b2', '#db2777', '#4b5563'];
     // 컨택현황(진행상태) 색상 — 시트에 '진행상태' 컬럼이 있으면 마커·카드·필터가 이 색을 씁니다
-    const STATUS_COLORS = { '미접촉': '#64748b', '방문완료': '#2563eb', '상담중': '#d97706', '계약': '#16a34a', '보류': '#7c3aed', '거절': '#dc2626' };
+    // (칩 순서 = 이 순서. 시트 드롭다운은 tools/Code_master.gs 의 STATUS_LIST 와 같아야 함)
+    const STATUS_COLORS = { '미컨택': '#64748b', '방문완료(종료)': '#dc2626', '방문완료(재컨택예정)': '#d97706', '방문완료(가망건)': '#2563eb', '성공': '#16a34a' };
+    const STATUS_DEFAULT = '미컨택';                                  // 상태가 비어 있는 행
+    const STATUS_LEGACY = { '미접촉': '#64748b', '방문완료': '#0ea5e9' }; // 예전 이름 — 시트에서 새 목록으로 바꾸기 전까지만 색을 유지
     // =============================================
 
     const $ = (id) => document.getElementById(id);
@@ -232,7 +235,7 @@
       if (!catColor.has(cat)) catColor.set(cat, PALETTE[catColor.size % PALETTE.length]);
       return catColor.get(cat);
     }
-    const statusColor = (s) => STATUS_COLORS[s] || '#64748b';
+    const statusColor = (s) => STATUS_COLORS[s] || STATUS_LEGACY[s] || '#64748b';
     // 마커·목록 점 색: 진행상태가 있으면 진행상태, 없으면(예전 시트·points.js) 업태 기준
     const pinColor = (r) => hasStatus ? statusColor(r.status) : colorFor(r.cat);
     function markerImage(color) {
@@ -473,7 +476,7 @@
       loadingText('데이터를 불러오는 중...');
       allRows = await fetchRows();
       hasStatus = allRows.some(r => r.status);   // 진행상태 컬럼이 있는 시트(영업관리 '지도용' 탭)면 컨택현황 모드
-      if (hasStatus) allRows.forEach(r => { if (!r.status) r.status = '미접촉'; });
+      if (hasStatus) allRows.forEach(r => { if (!r.status) r.status = STATUS_DEFAULT; });
       await fillMissingCoords(allRows);
       makeMarkers();
       buildChips();
