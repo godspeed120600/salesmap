@@ -28,8 +28,6 @@
     #months .chip { font-size: 14px; font-weight: 600; padding: 7px 14px; }
     #count { flex-shrink: 0; font-size: 12px; color: #475569; background: #fff; border-radius: 999px; padding: 7px 11px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); white-space: nowrap; }
     #count b { color: #2563eb; }
-    #chips { display: flex; gap: 6px; margin-top: 8px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
-    #chips::-webkit-scrollbar { display: none; }
     .chip {
       flex-shrink: 0; border: 1px solid #e2e8f0; background: #fff; color: #334155;
       border-radius: 999px; padding: 6px 12px; font-size: 13px; box-shadow: 0 1px 4px rgba(0,0,0,0.08);
@@ -123,7 +121,6 @@
       <div id="months"></div>
       <span id="count"><b>0</b>건</span>
     </div>
-    <div id="chips"></div>
   </div>
 
   <div id="fabs">
@@ -181,7 +178,6 @@
     const $ = (id) => document.getElementById(id);
     let map, geocoder, myMarker;
     let allRows = [];          // {name, addr, lat, lng, date, cat, sub, memo, marker(핀 오버레이), _el(핀 DOM)}
-    let activeCat = '';
     let activeMonth = '';      // 월 필터 ('YYYY-MM', 빈 값 = 전체)
     let hasStatus = false;     // 시트에 진행상태 컬럼이 있는지
     const catColor = new Map();
@@ -303,28 +299,18 @@
       mkChip(box, '전체', activeMonth === '', '', pick(''));
       ms.forEach(m => mkChip(box, label(m), activeMonth === m, '', pick(m)));
     }
-    // 업태 칩 (진행상태가 있으면 점 색은 쓰지 않음 — 색은 진행상태 전용)
-    function buildChips() {
-      const box = $('chips'); box.innerHTML = '';
-      const cats = [...new Set(allRows.map(r => r.cat).filter(Boolean))];
-      if (cats.length < 2) return;
-      const catChip = (label, val) => mkChip(box, label, val === activeCat, val && !hasStatus ? colorFor(val) : '', () => { activeCat = val; buildChips(); applyFilter(); });
-      catChip('전체', '');
-      cats.forEach(c => catChip(c, c));
-    }
     function visible(r) {
       if (isNaN(r.lat) || isNaN(r.lng)) return false;
-      if (activeCat && r.cat !== activeCat) return false;
       const d = normDate(r.date);    // 날짜를 읽을 수 없는 행은 월 필터에서 제외하지 않음
       if (activeMonth && d && d.slice(0, 7) !== activeMonth) return false;
       return true;
     }
-    // 필터가 바뀔 때: 다시 그리고 보이는 가게에 맞춰 화면 이동
+    // 월이 바뀔 때: 다시 그리고 보이는 가게에 맞춰 화면 이동
     function applyFilter() {
       if (!map || !allRows.length) return;
       render();
       if (allRows.some(visible)) fitToShown();
-      else toast('조건에 맞는 가게가 없어요');
+      else toast('이 달에 표시할 가게가 없어요');
     }
     function render() {
       const shown = allRows.filter(visible);
@@ -433,7 +419,7 @@
       if (pts.length === 1) { map.setLevel(4); map.panTo(new kakao.maps.LatLng(pts[0].lat, pts[0].lng)); return; }
       const b = new kakao.maps.LatLngBounds();
       pts.forEach(r => b.extend(new kakao.maps.LatLng(r.lat, r.lng)));
-      map.setBounds(b, 110, 40, 40, 40);   // 위쪽 여백 = 월 버튼·업태 칩 영역
+      map.setBounds(b, 80, 40, 40, 40);   // 위쪽 여백 = 월 버튼 영역
     }
 
     // --- 시작 ---
@@ -459,7 +445,6 @@
       const thisMonth = ymd(new Date()).slice(0, 7);
       activeMonth = months.includes(thisMonth) ? thisMonth : (months[months.length - 1] || '');
       buildMonths();
-      buildChips();
       render();
       hideLoading();
       if (allRows.some(visible)) fitToShown();
