@@ -42,6 +42,15 @@
     .chip.on { background: #1e293b; color: #fff; border-color: #1e293b; }
     .chipsep { flex-shrink: 0; width: 1px; margin: 4px 2px; background: #cbd5e1; }
 
+    /* 지도 핀: 작은 아이콘 + 인허가일(예: 11/16) 라벨 — 줌과 무관하게 항상 표시 */
+    .pin { position: relative; width: 18px; height: 24px; cursor: pointer; }
+    .pin svg { display: block; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.35)); }
+    .pin .pd {
+      position: absolute; left: 19px; top: 3px; height: 15px; line-height: 13px; padding: 0 4px;
+      font-size: 10px; font-weight: 700; color: #0f172a; white-space: nowrap;
+      background: rgba(255,255,255,0.93); border: 1px solid var(--c); border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+    }
+
     /* 인허가일자 기간 필터 */
     #daterow { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
     .datebox {
@@ -203,15 +212,14 @@
     // =============================================
 
     const $ = (id) => document.getElementById(id);
-    let map, clusterer, geocoder, myMarker;
-    let allRows = [];          // {name, addr, lat, lng, date, cat, sub, memo, marker}
+    let map, geocoder, myMarker;
+    let allRows = [];          // {name, addr, lat, lng, date, cat, sub, memo, marker(핀 오버레이), _el(핀 DOM)}
     let activeCat = '';
     let activeStatus = '';     // 진행상태 필터 (빈 값 = 전체)
     let hasStatus = false;     // 시트에 진행상태 컬럼이 있는지
     let query = '';
     let dateFrom = '', dateTo = '';   // 인허가일자 필터 (YYYY-MM-DD, 빈 값 = 제한 없음)
     const catColor = new Map();
-    const markerImages = new Map();
 
     function toast(msg, ms = 3500) {
       const t = $('toast'); t.textContent = msg; t.style.display = 'block';
@@ -224,7 +232,7 @@
     function loadKakao() {
       return new Promise((resolve, reject) => {
         const s = document.createElement('script');
-        s.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${CONFIG.KAKAO_JS_KEY}&libraries=services,clusterer&autoload=false`;
+        s.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${CONFIG.KAKAO_JS_KEY}&libraries=services&autoload=false`;
         s.onload = () => { if (window.kakao && kakao.maps) kakao.maps.load(resolve); else reject(new Error('sdk')); };
         s.onerror = () => reject(new Error('sdk'));
         document.head.appendChild(s);
@@ -238,13 +246,10 @@
     const statusColor = (s) => STATUS_COLORS[s] || STATUS_LEGACY[s] || '#64748b';
     // 마커·목록 점 색: 진행상태가 있으면 진행상태, 없으면(예전 시트·points.js) 업태 기준
     const pinColor = (r) => hasStatus ? statusColor(r.status) : colorFor(r.cat);
-    function markerImage(color) {
-      if (!markerImages.has(color)) {
-        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="30" height="40" viewBox="0 0 30 40"><path d="M15 0C6.7 0 0 6.7 0 15c0 10.5 15 25 15 25s15-14.5 15-25C30 6.7 23.3 0 15 0z" fill="${color}"/><circle cx="15" cy="15" r="6" fill="#fff"/></svg>`;
-        const src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
-        markerImages.set(color, new kakao.maps.MarkerImage(src, new kakao.maps.Size(30, 40), { offset: new kakao.maps.Point(15, 40) }));
-      }
-      return markerImages.get(color);
+    // 인허가일 → '11/16' (월/일, 0 없이). 날짜를 읽을 수 없으면 ''
+    function shortDate(s) {
+      const d = normDate(s);
+      return d ? `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}` : '';
     }
 
     // --- 날짜 유틸 (브라우저 로컬 시간 기준) ---
@@ -354,18 +359,46 @@
       return true;
     }
     function render() {
-      clusterer.clear();
       const shown = allRows.filter(visible);
-      clusterer.addMarkers(shown.map(r => r.marker));
+      const on = new Set(shown);
+      allRows.forEach(r => {                       // 보이는 핀만 지도에 올림 (묶음 없이 개별 표시)
+        if (!r.marker) return;
+        const want = on.has(r);
+        if (want !== !!r._on) { r.marker.setMap(want ? map : null); r._on = want; }
+      });
+      // 같은 좌표(같은 건물)의 가게들은 핀이 겹쳐 하나로 보이므로 위로 쌓아서 날짜 라벨이 각각 보이게 함
+      const groups = new Map();
+      shown.forEach(r => {
+        if (!r.marker) return;
+        const k = r.lat.toFixed(5) + ',' + r.lng.toFixed(5);
+        if (!groups.has(k)) groups.set(k, []);
+        groups.get(k).push(r);
+      });
+      groups.forEach(list => {
+        list.sort((a, b) => (normDate(b.date) || '').localeCompare(normDate(a.date) || '') || a.name.localeCompare(b.name));
+        list.forEach((r, i) => {
+          const col = Math.floor(i / 6), row = i % 6;            // 6개씩 한 열, 넘으면 오른쪽 열
+          r._el.style.transform = (col || row) ? `translate(${col * 62}px, ${-row * 17}px)` : '';
+        });
+      });
       $('count').innerHTML = `<b>${shown.length}</b>건`;
       if ($('list').classList.contains('show')) renderList();
     }
+    function makePin(r) {
+      const color = pinColor(r), dt = shortDate(r.date);
+      const el = document.createElement('div');
+      el.className = 'pin';
+      el.style.setProperty('--c', color);
+      el.title = r.name;
+      el.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="24" viewBox="0 0 30 40"><path d="M15 0C6.7 0 0 6.7 0 15c0 10.5 15 25 15 25s15-14.5 15-25C30 6.7 23.3 0 15 0z" fill="${color}"/><circle cx="15" cy="15" r="6" fill="#fff"/></svg>` + (dt ? '<span class="pd"></span>' : '');
+      if (dt) el.querySelector('.pd').textContent = dt;
+      el.addEventListener('click', (e) => { e.stopPropagation(); openCard(r); });
+      const z = Number(normDate(r.date).replace(/-/g, '')) - 20250000;   // 최근 인허가일수록 위에 표시
+      r._el = el;
+      r.marker = new kakao.maps.CustomOverlay({ position: new kakao.maps.LatLng(r.lat, r.lng), content: el, xAnchor: 0.5, yAnchor: 1, clickable: true, zIndex: z > 0 ? z : 1 });
+    }
     function makeMarkers() {
-      allRows.forEach(r => {
-        if (isNaN(r.lat) || isNaN(r.lng)) return;
-        r.marker = new kakao.maps.Marker({ position: new kakao.maps.LatLng(r.lat, r.lng), image: markerImage(pinColor(r)), title: r.name });
-        kakao.maps.event.addListener(r.marker, 'click', () => openCard(r));
-      });
+      allRows.forEach(r => { if (!isNaN(r.lat) && !isNaN(r.lng)) makePin(r); });
     }
 
     // --- 하단 카드 ---
@@ -448,7 +481,7 @@
         if (changed === 'from') t = f; else f = t;
       }
       setDates(f, t);
-      if (!map || !clusterer) return;   // 지도 로딩 전이면 값만 저장 (로딩 끝나면 이 값으로 표시)
+      if (!map || !allRows.length) return;   // 지도 로딩 전이면 값만 저장 (로딩 끝나면 이 값으로 표시)
       closeCard();
       render();
       if (allRows.some(visible)) fitToShown();
@@ -470,7 +503,6 @@
       }
       map = new kakao.maps.Map($('map'), { center: new kakao.maps.LatLng(CONFIG.CENTER.lat, CONFIG.CENTER.lng), level: CONFIG.LEVEL });
       geocoder = new kakao.maps.services.Geocoder();
-      clusterer = new kakao.maps.MarkerClusterer({ map, averageCenter: true, minLevel: 5, disableClickZoom: false, gridSize: 70 });
       kakao.maps.event.addListener(map, 'click', closeCard);
 
       loadingText('데이터를 불러오는 중...');
